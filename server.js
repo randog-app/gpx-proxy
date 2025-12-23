@@ -1,33 +1,55 @@
 import express from "express";
 import fetch from "node-fetch";
-import cors from "cors";
+import cheerio from "cheerio";
 
 const app = express();
-app.use(cors()); // autorise les requêtes venant du navigateur
 
-// Route principale
-app.get("/fetch", async (req, res) => {
-  const targetUrl = req.query.url;
-  if (!targetUrl) {
-    return res.status(400).send("Erreur : URL manquante");
-  }
-
+app.get("/extract-gpx", async (req, res) => {
   try {
-    const response = await fetch(targetUrl);
-    if (!response.ok) {
-      return res.status(response.status).send("Erreur HTTP: " + response.status);
+    const pageUrl = req.query.url;
+    if (!pageUrl) {
+      return res.status(400).send("URL manquante");
     }
 
-    const contentType = response.headers.get("content-type");
-    res.set("Content-Type", contentType);
-    const data = await response.text();
-    res.send(data);
+    // 1. Télécharger la page HTML
+    const html = await (await fetch(pageUrl)).text();
+
+    // 2. Charger le HTML dans Cheerio
+    const $ = cheerio.load(html);
+
+    // 3. Trouver le lien GPX (cas Visorando)
+    let gpxLink = null;
+
+    $("a").each((i, el) => {
+      const href = $(el).attr("href");
+      if (href && href.toLowerCase().includes("gpx")) {
+        gpxLink = href;
+      }
+    });
+
+    if (!gpxLink) {
+      return res.status(404).send("Lien GPX introuvable");
+    }
+
+    // 4. Lien relatif → absolu
+    if (gpxLink.startsWith("/")) {
+      const base = new URL(pageUrl).origin;
+      gpxLink = base + gpxLink;
+    }
+
+    // 5. Télécharger le GPX
+    const gpx = await (await fetch(gpxLink)).text();
+
+    // 6. Renvoyer le GPX à Bubble
+    res.set("Content-Type", "application/gpx+xml");
+    res.send(gpx);
+
   } catch (err) {
-    console.error("Erreur proxy:", err);
-    res.status(500).send("Erreur serveur proxy");
+    console.error(err);
+    res.status(500).send("Erreur serveur");
   }
 });
 
-// Lancement du serveur
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ Proxy GPX actif sur le port ${PORT}`));
+app.listen(3000, () => {
+  console.log("Serveur GPX actif");
+});
